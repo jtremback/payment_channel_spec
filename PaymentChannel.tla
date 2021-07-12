@@ -1,4 +1,20 @@
 --------------------------- MODULE PaymentChannel ---------------------------
+\*This is a specification of a unidirectional payment channel. A payment channel is a
+\*scheme to exchange a large number of payments between two parties while publishing
+\*only one transaction to the blockchain. A unidirectional payment channel means that
+\*one of the parties has the role of receiver while the other has the role of sender.
+\*
+\*First, the sender locks up some money in a smart contract on the blockchain. This
+\*contract will release some or all of this money to the receiver, if it receives
+\*an "update" message signed by the sender specifying how much money to release. Before the
+\*money is released, there is a challenge period of some amount of time. During this
+\*time the contract will accept any later update (with a higher value of "seq").
+\*
+\*This is to foil an attack where the sender closes the channel with an old update, so that
+\*the receiver does not receive as much money as it should. In this case, the receiver could
+\*submit the later update to the contract during the challenge period, resulting in 
+\*the full amount being released.
+
 EXTENDS Integers
 
 VARIABLES 
@@ -107,5 +123,5 @@ Next ==
   
 =============================================================================
 \* Modification History
-\* Last modified Mon Jul 12 16:11:50 PDT 2021 by jehan
+\* Last modified Mon Jul 12 16:28:11 PDT 2021 by jehan
 \* Created Fri Jul 09 10:49:41 PDT 2021 by jehan
