@@ -1,75 +1,111 @@
 --------------------------- MODULE PaymentChannel ---------------------------
 EXTENDS Integers
 
-CONSTANT sender, receiver
-
-\* VARIABLES 
-\*     msgs,               \* The set of all messages on the network 
-\*     contractState,      \* The state of the channel contract on the blockchain
-\*     contractSeq,        \* What the contract thinks the sequence number is
-\*     contractBalance,    \* What the contract thinks the balance is
-\*     sndSeq,             \* What the sender thinks the sequence number is
-\*     sndBalance,         \* What the sender thinks the balance of the channel is
-\*     rcvSeq,             \* What the receiver thinks the sequence number is
-\*     rcvBalance          \* What the receiver thinks the balance of the channel is
-
 VARIABLES 
     msgs,               \* The set of all messages on the network 
-    contractPhase,      
-    contractLastMessage,
-    sndLastMessage,
-    rcvLastMessage,
-
-\*    contractSeq,        \* What the contract thinks the sequence number is
-\*    contractBalance,    \* What the contract thinks the balance is
-\*    sndSeq,             \* What the sender thinks the sequence number is
-\*    sndBalance,         \* What the sender thinks the balance of the channel is
-\*    rcvSeq,             \* What the receiver thinks the sequence number is
-\*    rcvBalance          \* What the receiver thinks the balance of the channel is
+    contractState,      
+    receiverState,
+    senderState
 
 Messages == 
-    [type: {"pay"}, seq: Int, balance: Int] \union
-    [type: {"close"}, lastMessage: [type: {"pay"}, seq: Int, balance: Int]] \union
-    [type: {"challenge"}, lastMessage: [type: {"pay"}, seq: Int, balance: Int]]
+    [type: {"update"}, seq: Int, balance: Int] \union
+    [type: {"close"}, lastUpdate: [type: {"update"}, seq: Int, balance: Int]] \union
+    [type: {"challenge"}, lastUpdate: [type: {"update"}, seq: Int, balance: Int]]
     
-TypeOK == 
-    /\  contractPhase \in {"open", "challenge", "closed"}
-    /\  msgs \subseteq Messages
-    
-Init == 
-    /\  msgs = {}
-    /\  contractPhase = "open"
-    /\  contractLastMessage = FALSE \* Not sure how to initialize a temporarily empty value, maybe this is ok
-    /\  sndLastMessage = FALSE
-    /\  rcvLastMessage = FALSE
-    
-SenderPays == 
-    /\  sndSeq' = sndSeq + 1
-    /\  sndBalance' = sndBalance + 17
-    /\  msgs' = msgs \union {[
-            type |-> {"pay"},
-            seq |-> sndSeq + 1,
-            balance |-> sndBalance + 17
-        ]}
-    /\  UNCHANGED <<contractState, rcvSeq, rcvBalance>>
+\* Need to work on this
+\*TypeOK == 
+\*    /\  contractPhase \in {"open", "challenge", "closed"}
+\*    /\  msgs \subseteq Messages
 
-MessageLost ==
-    /\  msgs' = msgs \ { CHOOSE m \in msgs: TRUE }
+    
+Init ==
+    /\  msgs = {}
+    /\  contractState = [
+            phase |-> "open",
+            hasLastUpdate |-> FALSE
+        ]
+    /\  receiverState = [
+            hasLastUpdate |-> FALSE
+        ]
+    /\  senderState = [
+            hasLastUpdate |-> FALSE
+        ]
+
+SenderPays ==
+    /\  LET m == [
+            type |-> {"update"},
+            seq |-> (IF receiverState.hasLastUpdate THEN receiverState.lastUpdate.seq ELSE 0) + 1,
+            balance |-> (IF senderState.hasLastUpdate THEN senderState.lastUpdate.seq ELSE 0) + 17
+        ]
+        IN  /\  msgs' = msgs \union {m}
+            /\  senderState' = [ senderState EXCEPT !["lastUpdate"] = m ]
+    /\  UNCHANGED <<contractState, receiverState>>
+
+MessageLost == 
+    /\  \E m \in msgs:
+            msgs' = msgs \ {m}
+    /\  UNCHANGED <<contractState, senderState, receiverState>>
+
+\*MessageLost ==
+\*    \E m \in SUBSET msgs:
+\*        msgs' = msgs \ m
 
 ReceiverReceives ==
-    /\  \E m \in msgs:
-            /\  m.type = "pay"
-            /\  m.seq = rcvSeq + 1
-            /\  m.balance >= sndBalance
-            /\  rcvSeq' = m.seq
-            /\  rcvBalance' = m.balance
-            /\  UNCHANGED <<contractState, sndSeq, sndBalance, msgs>>
+    /\ \E m \in msgs:
+        /\  m.type = "update"
+        /\  m.seq = (IF receiverState.hasLastUpdate THEN receiverState.lastUpdate.seq ELSE 0) + 1
+        /\  m.balance >= (IF senderState.hasLastUpdate THEN senderState.lastUpdate.seq ELSE 0)
+        /\  receiverState' = [ receiverState EXCEPT !["lastUpdate"] = m ]
+    /\  UNCHANGED <<msgs, contractState, senderState>>
 
+\* This is intended to capture both honest and dishonest closes.
+\* The honest close is when the last message happens to be chosen,
+\* the "dishonest" close is when any other message is chosen.
 SomeoneCloses ==
-    /\  LET 
+    /\  \E m \in msgs:
+            msgs' = msgs \union {[ type |-> "close", lastMessage |-> m ]}
+    /\  UNCHANGED <<contractState, senderState, receiverState>>
 
-            
+ContractReceivesClose ==
+    /\  contractState.phase = "open"
+    /\  \E m \in msgs:
+        /\  m.type = "close"
+        /\  contractState' = [ contractState EXCEPT !["phase"] = "challenge", !["lastUpdate"] = m.lastUpdate ]
+    /\  UNCHANGED <<msgs, senderState, receiverState>>
+
+
+\* We can just assume that the challenger is the receiver, since in a unidirectional channel,
+\* only the sender has something to gain from an incorrect close, and wouldn't be challenging it
+ReceiverChallenges ==
+    /\  contractState.phase = "challenge"
+    /\  contractState.lastUpdate.seq < receiverState.seq
+    /\  msgs' = msgs \union {[ type |-> "challenge", lastUpdate |-> receiverState.lastUpdate ]}
+    /\  UNCHANGED <<contractState, senderState, receiverState>>
+    
+ContractReceivesChallenge ==
+    /\  contractState.phase = "challenge"
+    /\  \E m \in msgs:
+        /\  m.type = "challenge"
+        /\  m.lastUpdate.seq > contractState.lastUpdate.seq
+        /\  contractState' = [ contractState EXCEPT !["lastUpdate"] = m.lastUpdate ]
+    /\  UNCHANGED <<msgs, senderState, receiverState>>
+        
+FinalizeClose ==
+    /\  contractState.phase = "challenge"
+    /\  contractState' = [ contractState EXCEPT !["phase"] = "closed" ]
+    /\  UNCHANGED <<msgs, senderState, receiverState>>
+
+Next ==
+    \/  SenderPays
+    \/  MessageLost
+    \/  ReceiverReceives
+    \/  SomeoneCloses
+    \/  ContractReceivesClose
+    \/  ReceiverChallenges
+    \/  ContractReceivesChallenge
+    \/  FinalizeClose
+  
 =============================================================================
 \* Modification History
-\* Last modified Mon Jul 12 10:36:48 PDT 2021 by jehan
+\* Last modified Mon Jul 12 16:11:50 PDT 2021 by jehan
 \* Created Fri Jul 09 10:49:41 PDT 2021 by jehan
