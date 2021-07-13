@@ -56,19 +56,20 @@ Init ==
         ]
 
 SenderPays ==
+    /\  senderLastUpdate.seq < 11
     /\  LET m == [
             type |-> "update",
             seq |-> senderLastUpdate.seq + 1,
-            balance |-> senderLastUpdate.balance + 17
+            balance |-> senderLastUpdate.balance + 10
         ]
         IN  /\  msgs' = msgs \union {m}
             /\  senderLastUpdate' = m
     /\  UNCHANGED <<contractPhase, contractLastUpdate, receiverLastUpdate>>
 
-MessageLost == 
-    /\  \E m \in msgs:
-            msgs' = msgs \ {m}
-    /\  UNCHANGED <<contractPhase, contractLastUpdate, senderLastUpdate, receiverLastUpdate>>
+\*MessageLost == 
+\*    /\  \E m \in msgs:
+\*            msgs' = msgs \ {m}
+\*    /\  UNCHANGED <<contractPhase, contractLastUpdate, senderLastUpdate, receiverLastUpdate>>
 
 \*MessageLost ==
 \*    \E m \in SUBSET msgs:
@@ -123,7 +124,7 @@ FinalizeClose ==
 
 Next ==
     \/  SenderPays
-    \/  MessageLost
+\*    \/  MessageLost
     \/  ReceiverReceives
     \/  SomeoneCloses
     \/  ContractReceivesClose
@@ -133,5 +134,5 @@ Next ==
   
 =============================================================================
 \* Modification History
-\* Last modified Tue Jul 13 08:53:13 PDT 2021 by jehan
+\* Last modified Tue Jul 13 10:42:19 PDT 2021 by jehan
 \* Created Fri Jul 09 10:49:41 PDT 2021 by jehan
