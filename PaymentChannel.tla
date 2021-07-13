@@ -19,9 +19,10 @@ EXTENDS Integers
 
 VARIABLES 
     msgs,               \* The set of all messages on the network 
-    contractState,      
-    receiverState,
-    senderState
+    contractPhase,
+    contractLastUpdate,
+    receiverLastUpdate,
+    senderLastUpdate
 
 Messages == 
     [type: {"update"}, seq: Int, balance: Int] \union
@@ -29,38 +30,45 @@ Messages ==
     [type: {"challenge"}, lastUpdate: [type: {"update"}, seq: Int, balance: Int]]
     
 \* Need to work on this
-\*TypeOK == 
-\*    /\  contractPhase \in {"open", "challenge", "closed"}
-\*    /\  msgs \subseteq Messages
+TypeOK == 
+    /\  contractPhase \in {"open", "challenge", "closed"}
+    /\  msgs \subseteq Messages
+    /\  {contractLastUpdate, receiverLastUpdate, senderLastUpdate} \subseteq Messages
 
     
 Init ==
     /\  msgs = {}
-    /\  contractState = [
-            phase |-> "open",
-            hasLastUpdate |-> FALSE
+    /\  contractPhase = "open"
+    /\  contractLastUpdate = [
+            type |-> "update",
+            seq |-> 0,
+            balance |-> 0
         ]
-    /\  receiverState = [
-            hasLastUpdate |-> FALSE
+    /\  receiverLastUpdate = [
+            type |-> "update",
+            seq |-> 0,
+            balance |-> 0
         ]
-    /\  senderState = [
-            hasLastUpdate |-> FALSE
+    /\  senderLastUpdate = [
+            type |-> "update",
+            seq |-> 0,
+            balance |-> 0
         ]
 
 SenderPays ==
     /\  LET m == [
-            type |-> {"update"},
-            seq |-> (IF receiverState.hasLastUpdate THEN receiverState.lastUpdate.seq ELSE 0) + 1,
-            balance |-> (IF senderState.hasLastUpdate THEN senderState.lastUpdate.seq ELSE 0) + 17
+            type |-> "update",
+            seq |-> senderLastUpdate.seq + 1,
+            balance |-> senderLastUpdate.balance + 17
         ]
         IN  /\  msgs' = msgs \union {m}
-            /\  senderState' = [ senderState EXCEPT !["lastUpdate"] = m ]
-    /\  UNCHANGED <<contractState, receiverState>>
+            /\  senderLastUpdate' = m
+    /\  UNCHANGED <<contractPhase, contractLastUpdate, receiverLastUpdate>>
 
 MessageLost == 
     /\  \E m \in msgs:
             msgs' = msgs \ {m}
-    /\  UNCHANGED <<contractState, senderState, receiverState>>
+    /\  UNCHANGED <<contractPhase, contractLastUpdate, senderLastUpdate, receiverLastUpdate>>
 
 \*MessageLost ==
 \*    \E m \in SUBSET msgs:
@@ -69,47 +77,49 @@ MessageLost ==
 ReceiverReceives ==
     /\ \E m \in msgs:
         /\  m.type = "update"
-        /\  m.seq = (IF receiverState.hasLastUpdate THEN receiverState.lastUpdate.seq ELSE 0) + 1
-        /\  m.balance >= (IF senderState.hasLastUpdate THEN senderState.lastUpdate.seq ELSE 0)
-        /\  receiverState' = [ receiverState EXCEPT !["lastUpdate"] = m ]
-    /\  UNCHANGED <<msgs, contractState, senderState>>
+        /\  m.seq = receiverLastUpdate.seq + 1
+        /\  m.balance >= receiverLastUpdate.balance
+        /\  receiverLastUpdate' = m
+    /\  UNCHANGED <<msgs, contractPhase, contractLastUpdate, senderLastUpdate>>
 
 \* This is intended to capture both honest and dishonest closes.
 \* The honest close is when the last message happens to be chosen,
 \* the "dishonest" close is when any other message is chosen.
 SomeoneCloses ==
     /\  \E m \in msgs:
-            msgs' = msgs \union {[ type |-> "close", lastMessage |-> m ]}
-    /\  UNCHANGED <<contractState, senderState, receiverState>>
+            /\  m.type = "update"
+            /\  msgs' = msgs \union {[ type |-> "close", lastUpdate |-> m ]}
+    /\  UNCHANGED <<contractPhase, contractLastUpdate, senderLastUpdate, receiverLastUpdate>>
 
 ContractReceivesClose ==
-    /\  contractState.phase = "open"
+    /\  contractPhase = "open"
     /\  \E m \in msgs:
         /\  m.type = "close"
-        /\  contractState' = [ contractState EXCEPT !["phase"] = "challenge", !["lastUpdate"] = m.lastUpdate ]
-    /\  UNCHANGED <<msgs, senderState, receiverState>>
+        /\  contractPhase' = "challenge"
+        /\  contractLastUpdate' = m.lastUpdate
+    /\  UNCHANGED <<msgs, senderLastUpdate, receiverLastUpdate>>
 
 
 \* We can just assume that the challenger is the receiver, since in a unidirectional channel,
 \* only the sender has something to gain from an incorrect close, and wouldn't be challenging it
 ReceiverChallenges ==
-    /\  contractState.phase = "challenge"
-    /\  contractState.lastUpdate.seq < receiverState.seq
-    /\  msgs' = msgs \union {[ type |-> "challenge", lastUpdate |-> receiverState.lastUpdate ]}
-    /\  UNCHANGED <<contractState, senderState, receiverState>>
+    /\  contractPhase = "challenge"
+    /\  contractLastUpdate.seq < receiverLastUpdate.seq
+    /\  msgs' = msgs \union {[ type |-> "challenge", lastUpdate |-> receiverLastUpdate ]}
+    /\  UNCHANGED <<contractPhase, contractLastUpdate, senderLastUpdate, receiverLastUpdate>>
     
 ContractReceivesChallenge ==
-    /\  contractState.phase = "challenge"
+    /\  contractPhase = "challenge"
     /\  \E m \in msgs:
         /\  m.type = "challenge"
-        /\  m.lastUpdate.seq > contractState.lastUpdate.seq
-        /\  contractState' = [ contractState EXCEPT !["lastUpdate"] = m.lastUpdate ]
-    /\  UNCHANGED <<msgs, senderState, receiverState>>
+        /\  m.lastUpdate.seq > contractLastUpdate.seq
+        /\  contractLastUpdate' = m.lastUpdate
+    /\  UNCHANGED <<msgs, contractPhase, senderLastUpdate, receiverLastUpdate>>
         
 FinalizeClose ==
-    /\  contractState.phase = "challenge"
-    /\  contractState' = [ contractState EXCEPT !["phase"] = "closed" ]
-    /\  UNCHANGED <<msgs, senderState, receiverState>>
+    /\  contractPhase = "challenge"
+    /\  contractPhase' = "closed"
+    /\  UNCHANGED <<msgs, contractLastUpdate, senderLastUpdate, receiverLastUpdate>>
 
 Next ==
     \/  SenderPays
@@ -123,5 +133,5 @@ Next ==
   
 =============================================================================
 \* Modification History
-\* Last modified Mon Jul 12 16:28:11 PDT 2021 by jehan
+\* Last modified Tue Jul 13 08:53:13 PDT 2021 by jehan
 \* Created Fri Jul 09 10:49:41 PDT 2021 by jehan
