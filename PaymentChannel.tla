@@ -17,11 +17,16 @@
 
 EXTENDS Integers
 
-VARIABLES 
-    msgs,               \* The set of all messages on the network 
+VARIABLES
+    \* @type: Set([type: Str, seq: Int, balance: Int, lastUpdate: [type: Str, seq: Int, balance: Int]]);
+    msgs,               \* The set of all messages on the network
+    \* @type: Str;
     contractPhase,
+    \* @type: [type: Str, seq: Int, balance: Int];
     contractLastUpdate,
+    \* @type: [type: Str, seq: Int, balance: Int];
     receiverLastUpdate,
+    \* @type: [type: Str, seq: Int, balance: Int];
     senderLastUpdate
 
 Messages == 
@@ -134,5 +139,5 @@ Next ==
   
 =============================================================================
 \* Modification History
-\* Last modified Tue Jul 13 10:42:19 PDT 2021 by jehan
+\* Last modified Wed Jul 14 07:48:57 PDT 2021 by jehan
 \* Created Fri Jul 09 10:49:41 PDT 2021 by jehan
