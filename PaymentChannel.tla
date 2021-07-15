@@ -15,7 +15,7 @@
 \*submit the later update to the contract during the challenge period, resulting in 
 \*the full amount being released.
 
-EXTENDS Integers
+EXTENDS Integers, TLC
 
 VARIABLES
     \* @type: Set([type: Str, seq: Int, balance: Int, lastUpdate: [type: Str, seq: Int, balance: Int]]);
@@ -62,6 +62,8 @@ Init ==
 
 SenderPays ==
     /\  senderLastUpdate.seq < 11
+    /\  PrintT("SenderPays")
+    /\  PrintT(senderLastUpdate.seq)
     /\  LET m == [
             type |-> "update",
             seq |-> senderLastUpdate.seq + 1,
@@ -83,6 +85,7 @@ SenderPays ==
 ReceiverReceives ==
     /\ \E m \in msgs:
         /\  m.type = "update"
+        /\  PrintT("ReceiverReceives")
         /\  m.seq = receiverLastUpdate.seq + 1
         /\  m.balance >= receiverLastUpdate.balance
         /\  receiverLastUpdate' = m
@@ -91,14 +94,26 @@ ReceiverReceives ==
 \* This is intended to capture both honest and dishonest closes.
 \* The honest close is when the last message happens to be chosen,
 \* the "dishonest" close is when any other message is chosen.
-SomeoneCloses ==
-    /\  \E m \in msgs:
-            /\  m.type = "update"
-            /\  msgs' = msgs \union {[ type |-> "close", lastUpdate |-> m ]}
+\* Commenting this out to diagnose state space blowup
+\* SomeoneCloses ==
+\*     /\  \E m \in msgs:
+\*             /\  m.type = "update"
+\*             /\  PrintT("SomeoneCloses")
+\*             /\  msgs' = msgs \union {[ type |-> "close", lastUpdate |-> m ]}
+\*     /\  UNCHANGED <<contractPhase, contractLastUpdate, senderLastUpdate, receiverLastUpdate>>
+
+SenderHonestClose ==
+    /\  msgs' = msgs \union {[ type |-> "close", lastUpdate |-> senderLastUpdate ]}
     /\  UNCHANGED <<contractPhase, contractLastUpdate, senderLastUpdate, receiverLastUpdate>>
+
+ReceiverHonestClose ==
+    /\  msgs' = msgs \union {[ type |-> "close", lastUpdate |-> receiverLastUpdate ]}
+    /\  UNCHANGED <<contractPhase, contractLastUpdate, senderLastUpdate, receiverLastUpdate>>
+
 
 ContractReceivesClose ==
     /\  contractPhase = "open"
+    /\  PrintT("ContractReceivesClose")
     /\  \E m \in msgs:
         /\  m.type = "close"
         /\  contractPhase' = "challenge"
@@ -110,12 +125,14 @@ ContractReceivesClose ==
 \* only the sender has something to gain from an incorrect close, and wouldn't be challenging it
 ReceiverChallenges ==
     /\  contractPhase = "challenge"
+    /\  PrintT("ReceiverChallenges")
     /\  contractLastUpdate.seq < receiverLastUpdate.seq
     /\  msgs' = msgs \union {[ type |-> "challenge", lastUpdate |-> receiverLastUpdate ]}
     /\  UNCHANGED <<contractPhase, contractLastUpdate, senderLastUpdate, receiverLastUpdate>>
     
 ContractReceivesChallenge ==
     /\  contractPhase = "challenge"
+    /\  PrintT("ContractReceivesChallenge")
     /\  \E m \in msgs:
         /\  m.type = "challenge"
         /\  m.lastUpdate.seq > contractLastUpdate.seq
@@ -124,6 +141,7 @@ ContractReceivesChallenge ==
         
 FinalizeClose ==
     /\  contractPhase = "challenge"
+    /\  PrintT("FinalizeClose")
     /\  contractPhase' = "closed"
     /\  UNCHANGED <<msgs, contractLastUpdate, senderLastUpdate, receiverLastUpdate>>
 
@@ -131,11 +149,13 @@ Next ==
     \/  SenderPays
 \*    \/  MessageLost
     \/  ReceiverReceives
-    \/  SomeoneCloses
+    \/  SenderHonestClose
+    \/  ReceiverHonestClose
     \/  ContractReceivesClose
     \/  ReceiverChallenges
     \/  ContractReceivesChallenge
     \/  FinalizeClose
+    /\  PrintT("Next")
   
 =============================================================================
 \* Modification History
