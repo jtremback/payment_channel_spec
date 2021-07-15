@@ -15,11 +15,13 @@
 \*submit the later update to the contract during the challenge period, resulting in 
 \*the full amount being released.
 
+\* https://github.com/cosmos/ibc-go/blob/main/modules/apps/transfer/keeper/relay_model/relay_tests.tla
+
 EXTENDS Integers, TLC
 
 VARIABLES
     \* @type: Set([type: Str, seq: Int, balance: Int, lastUpdate: [type: Str, seq: Int, balance: Int]]);
-    msgs,               \* The set of all messages on the network
+    msgs,
     \* @type: Str;
     contractPhase,
     \* @type: [type: Str, seq: Int, balance: Int];
@@ -30,9 +32,9 @@ VARIABLES
     senderLastUpdate
 
 Messages == 
-    [type: {"update"}, seq: Int, balance: Int] \union
-    [type: {"close"}, lastUpdate: [type: {"update"}, seq: Int, balance: Int]] \union
-    [type: {"challenge"}, lastUpdate: [type: {"update"}, seq: Int, balance: Int]]
+    [type: {"update"}, seq: 0..5, balance: 0..5] \union
+    [type: {"close"}, lastUpdate: [type: {"update"}, seq: 0..5, balance: 0..5]] \union
+    [type: {"challenge"}, lastUpdate: [type: {"update"}, seq: 0..5, balance: 0..5]]
     
 \* Need to work on this
 TypeOK == 
@@ -61,15 +63,15 @@ Init ==
         ]
 
 SenderPays ==
-    /\  senderLastUpdate.seq < 11
+    /\  senderLastUpdate.seq <= 5
     /\  PrintT("SenderPays")
     /\  PrintT(senderLastUpdate.seq)
     /\  LET m == [
             type |-> "update",
             seq |-> senderLastUpdate.seq + 1,
-            balance |-> senderLastUpdate.balance + 10
+            balance |-> senderLastUpdate.balance + 1
         ]
-        IN  /\  msgs' = msgs \union {m}
+        IN  /\  msgs' = {m}
             /\  senderLastUpdate' = m
     /\  UNCHANGED <<contractPhase, contractLastUpdate, receiverLastUpdate>>
 
@@ -89,7 +91,8 @@ ReceiverReceives ==
         /\  m.seq = receiverLastUpdate.seq + 1
         /\  m.balance >= receiverLastUpdate.balance
         /\  receiverLastUpdate' = m
-    /\  UNCHANGED <<msgs, contractPhase, contractLastUpdate, senderLastUpdate>>
+        /\  msgs' = {}
+    /\  UNCHANGED <<contractPhase, contractLastUpdate, senderLastUpdate>>
 
 \* This is intended to capture both honest and dishonest closes.
 \* The honest close is when the last message happens to be chosen,
@@ -103,11 +106,11 @@ ReceiverReceives ==
 \*     /\  UNCHANGED <<contractPhase, contractLastUpdate, senderLastUpdate, receiverLastUpdate>>
 
 SenderHonestClose ==
-    /\  msgs' = msgs \union {[ type |-> "close", lastUpdate |-> senderLastUpdate ]}
+    /\  msgs' = {[ type |-> "close", lastUpdate |-> senderLastUpdate ]}
     /\  UNCHANGED <<contractPhase, contractLastUpdate, senderLastUpdate, receiverLastUpdate>>
 
 ReceiverHonestClose ==
-    /\  msgs' = msgs \union {[ type |-> "close", lastUpdate |-> receiverLastUpdate ]}
+    /\  msgs' = {[ type |-> "close", lastUpdate |-> receiverLastUpdate ]}
     /\  UNCHANGED <<contractPhase, contractLastUpdate, senderLastUpdate, receiverLastUpdate>>
 
 
@@ -118,7 +121,8 @@ ContractReceivesClose ==
         /\  m.type = "close"
         /\  contractPhase' = "challenge"
         /\  contractLastUpdate' = m.lastUpdate
-    /\  UNCHANGED <<msgs, senderLastUpdate, receiverLastUpdate>>
+        /\  msgs' = {}
+    /\  UNCHANGED <<senderLastUpdate, receiverLastUpdate>>
 
 
 \* We can just assume that the challenger is the receiver, since in a unidirectional channel,
@@ -127,7 +131,7 @@ ReceiverChallenges ==
     /\  contractPhase = "challenge"
     /\  PrintT("ReceiverChallenges")
     /\  contractLastUpdate.seq < receiverLastUpdate.seq
-    /\  msgs' = msgs \union {[ type |-> "challenge", lastUpdate |-> receiverLastUpdate ]}
+    /\  msgs' = {[ type |-> "challenge", lastUpdate |-> receiverLastUpdate ]}
     /\  UNCHANGED <<contractPhase, contractLastUpdate, senderLastUpdate, receiverLastUpdate>>
     
 ContractReceivesChallenge ==
@@ -137,7 +141,8 @@ ContractReceivesChallenge ==
         /\  m.type = "challenge"
         /\  m.lastUpdate.seq > contractLastUpdate.seq
         /\  contractLastUpdate' = m.lastUpdate
-    /\  UNCHANGED <<msgs, contractPhase, senderLastUpdate, receiverLastUpdate>>
+        /\  msgs' = {}
+    /\  UNCHANGED <<contractPhase, senderLastUpdate, receiverLastUpdate>>
         
 FinalizeClose ==
     /\  contractPhase = "challenge"
