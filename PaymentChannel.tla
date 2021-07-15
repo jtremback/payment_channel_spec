@@ -29,12 +29,18 @@ VARIABLES
     \* @type: [type: Str, seq: Int, balance: Int];
     receiverLastUpdate,
     \* @type: [type: Str, seq: Int, balance: Int];
-    senderLastUpdate
+    senderLastUpdate,
+    \* @type: [type: Str, seq: Int, balance: Int];
+    senderInFlightUpdate
+
+\* UNCHANGED <<msgs, contractPhase, contractLastUpdate, receiverLastUpdate, senderLastUpdate, senderInFlightUpdate>>
+
+UpdateMessage == [type: {"update"}, seq: 0..5, balance: 0..5, senderSig: BOOLEAN, receiverSig: BOOLEAN]
 
 Messages == 
-    [type: {"update"}, seq: 0..5, balance: 0..5] \union
-    [type: {"close"}, lastUpdate: [type: {"update"}, seq: 0..5, balance: 0..5]] \union
-    [type: {"challenge"}, lastUpdate: [type: {"update"}, seq: 0..5, balance: 0..5]]
+    UpdateMessage \union
+    [type: {"close"}, lastUpdate: UpdateMessage] \union
+    [type: {"challenge"}, lastUpdate: UpdateMessage]
     
 \* Need to work on this
 TypeOK == 
@@ -49,118 +55,131 @@ Init ==
     /\  contractLastUpdate = [
             type |-> "update",
             seq |-> 0,
-            balance |-> 0
+            balance |-> 0,
+            senderSig |-> TRUE,
+            receiverSig |-> TRUE
         ]
     /\  receiverLastUpdate = [
             type |-> "update",
             seq |-> 0,
-            balance |-> 0
+            balance |-> 0,
+            senderSig |-> TRUE,
+            receiverSig |-> TRUE
         ]
     /\  senderLastUpdate = [
             type |-> "update",
             seq |-> 0,
-            balance |-> 0
+            balance |-> 0,
+            senderSig |-> TRUE,
+            receiverSig |-> TRUE
+        ]
+    /\  senderInFlightUpdate = [
+            type |-> "update",
+            seq |-> 0,
+            balance |-> 0,
+            senderSig |-> TRUE,
+            receiverSig |-> TRUE
         ]
 
-SenderPays ==
+SenderSendsPayment ==
     /\  senderLastUpdate.seq <= 5
-    /\  PrintT("SenderPays")
-    /\  PrintT(senderLastUpdate.seq)
     /\  LET m == [
             type |-> "update",
             seq |-> senderLastUpdate.seq + 1,
-            balance |-> senderLastUpdate.balance + 1
+            balance |-> senderLastUpdate.balance + 1,
+            senderSig |-> TRUE,
+            receiverSig |-> FALSE
         ]
         IN  /\  msgs' = {m}
-            /\  senderLastUpdate' = m
-    /\  UNCHANGED <<contractPhase, contractLastUpdate, receiverLastUpdate>>
+            /\  senderInFlightUpdate' = m
+    /\  UNCHANGED <<contractPhase, contractLastUpdate, receiverLastUpdate, senderLastUpdate>>
 
-\*MessageLost == 
-\*    /\  \E m \in msgs:
-\*            msgs' = msgs \ {m}
-\*    /\  UNCHANGED <<contractPhase, contractLastUpdate, senderLastUpdate, receiverLastUpdate>>
+MessageLost == 
+    /\  msgs' = {}
+    /\  UNCHANGED <<contractPhase, contractLastUpdate, receiverLastUpdate, senderLastUpdate, senderInFlightUpdate>>
 
-\*MessageLost ==
-\*    \E m \in SUBSET msgs:
-\*        msgs' = msgs \ m
-
-ReceiverReceives ==
+ReceiverConfirmsPayment ==
     /\ \E m \in msgs:
         /\  m.type = "update"
-        /\  PrintT("ReceiverReceives")
         /\  m.seq = receiverLastUpdate.seq + 1
         /\  m.balance >= receiverLastUpdate.balance
-        /\  receiverLastUpdate' = m
-        /\  msgs' = {}
-    /\  UNCHANGED <<contractPhase, contractLastUpdate, senderLastUpdate>>
+        /\  m.senderSig = TRUE
+        /\  m.receiverSig = FALSE
+        /\  receiverLastUpdate' = [m EXCEPT !["receiverSig"] = TRUE]
+        /\  msgs' = {[m EXCEPT !["receiverSig"] = TRUE]}
+    /\  UNCHANGED <<contractPhase, contractLastUpdate, senderLastUpdate, senderInFlightUpdate>>
 
-\* This is intended to capture both honest and dishonest closes.
-\* The honest close is when the last message happens to be chosen,
-\* the "dishonest" close is when any other message is chosen.
-\* Commenting this out to diagnose state space blowup
-\* SomeoneCloses ==
-\*     /\  \E m \in msgs:
-\*             /\  m.type = "update"
-\*             /\  PrintT("SomeoneCloses")
-\*             /\  msgs' = msgs \union {[ type |-> "close", lastUpdate |-> m ]}
-\*     /\  UNCHANGED <<contractPhase, contractLastUpdate, senderLastUpdate, receiverLastUpdate>>
+SenderReceivesConfirmation ==
+    /\ \E m \in msgs:
+        /\  m = [senderInFlightUpdate EXCEPT !["receiverSig"] = TRUE]
+        /\  senderLastUpdate' = m
+        /\  msgs' = {}
+    /\  UNCHANGED <<contractPhase, contractLastUpdate, receiverLastUpdate, senderInFlightUpdate>>
 
 SenderHonestClose ==
     /\  msgs' = {[ type |-> "close", lastUpdate |-> senderLastUpdate ]}
-    /\  UNCHANGED <<contractPhase, contractLastUpdate, senderLastUpdate, receiverLastUpdate>>
+    /\  UNCHANGED <<contractPhase, contractLastUpdate, receiverLastUpdate, senderLastUpdate, senderInFlightUpdate>>
 
 ReceiverHonestClose ==
     /\  msgs' = {[ type |-> "close", lastUpdate |-> receiverLastUpdate ]}
-    /\  UNCHANGED <<contractPhase, contractLastUpdate, senderLastUpdate, receiverLastUpdate>>
+    /\  UNCHANGED <<contractPhase, contractLastUpdate, receiverLastUpdate, senderLastUpdate, senderInFlightUpdate>>
 
+SenderDishonestClose ==
+    /\  msgs' = {[ type |-> "close", lastUpdate |-> [
+            type |-> "update",
+            seq |-> 0,
+            balance |-> 0,
+            senderSig |-> TRUE,
+            receiverSig |-> TRUE
+        ]]}
 
 ContractReceivesClose ==
     /\  contractPhase = "open"
-    /\  PrintT("ContractReceivesClose")
     /\  \E m \in msgs:
         /\  m.type = "close"
+        /\  m.lastUpdate.senderSig = TRUE
+        /\  m.lastUpdate.receiverSig = TRUE
         /\  contractPhase' = "challenge"
         /\  contractLastUpdate' = m.lastUpdate
         /\  msgs' = {}
-    /\  UNCHANGED <<senderLastUpdate, receiverLastUpdate>>
+    /\  UNCHANGED <<receiverLastUpdate, senderLastUpdate, senderInFlightUpdate>>
 
 
 \* We can just assume that the challenger is the receiver, since in a unidirectional channel,
 \* only the sender has something to gain from an incorrect close, and wouldn't be challenging it
 ReceiverChallenges ==
     /\  contractPhase = "challenge"
-    /\  PrintT("ReceiverChallenges")
     /\  contractLastUpdate.seq < receiverLastUpdate.seq
     /\  msgs' = {[ type |-> "challenge", lastUpdate |-> receiverLastUpdate ]}
-    /\  UNCHANGED <<contractPhase, contractLastUpdate, senderLastUpdate, receiverLastUpdate>>
+    /\  UNCHANGED <<contractPhase, contractLastUpdate, receiverLastUpdate, senderLastUpdate, senderInFlightUpdate>>
     
 ContractReceivesChallenge ==
     /\  contractPhase = "challenge"
-    /\  PrintT("ContractReceivesChallenge")
     /\  \E m \in msgs:
         /\  m.type = "challenge"
+        /\  m.lastUpdate.senderSig = TRUE
+        /\  m.lastUpdate.receiverSig = TRUE
         /\  m.lastUpdate.seq > contractLastUpdate.seq
         /\  contractLastUpdate' = m.lastUpdate
         /\  msgs' = {}
-    /\  UNCHANGED <<contractPhase, senderLastUpdate, receiverLastUpdate>>
+    /\  UNCHANGED <<contractPhase, receiverLastUpdate, senderLastUpdate, senderInFlightUpdate>>
         
 FinalizeClose ==
     /\  contractPhase = "challenge"
-    /\  PrintT("FinalizeClose")
     /\  contractPhase' = "closed"
-    /\  UNCHANGED <<msgs, contractLastUpdate, senderLastUpdate, receiverLastUpdate>>
+    /\  UNCHANGED <<msgs, contractLastUpdate, receiverLastUpdate, senderLastUpdate, senderInFlightUpdate>>
 
 Next ==
-    \/  SenderPays
-\*    \/  MessageLost
-    \/  ReceiverReceives
+    \/  SenderSendsPayment
+    \/  MessageLost
+    \/  ReceiverConfirmsPayment
+    \/  SenderReceivesConfirmation
     \/  SenderHonestClose
     \/  ReceiverHonestClose
     \/  ContractReceivesClose
     \/  ReceiverChallenges
     \/  ContractReceivesChallenge
     \/  FinalizeClose
-    /\  PrintT("Next")
   
 =============================================================================
 \* Modification History
