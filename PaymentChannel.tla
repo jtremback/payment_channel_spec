@@ -41,14 +41,21 @@ Messages ==
     UpdateMessage \union
     [type: {"close"}, lastUpdate: UpdateMessage] \union
     [type: {"challenge"}, lastUpdate: UpdateMessage]
-    
-\* Need to work on this
+
+\* Invariants
 TypeOK == 
     /\  contractPhase \in {"open", "challenge", "closed"}
     /\  msgs \subseteq Messages
-    /\  {contractLastUpdate, receiverLastUpdate, senderLastUpdate} \subseteq Messages
+    /\  {contractLastUpdate, receiverLastUpdate, senderLastUpdate, senderInFlightUpdate} \subseteq Messages
 
-    
+\* Channel should not close with an update that doesn't match the sender and the receiver's latest update
+UpdatesMatch ==
+    IF contractPhase = "closed"
+    THEN contractLastUpdate = senderLastUpdate /\ contractLastUpdate = receiverLastUpdate
+    ELSE TRUE
+
+Inv == TypeOK /\ UpdatesMatch
+
 Init ==
     /\  msgs = {}
     /\  contractPhase = "open"
