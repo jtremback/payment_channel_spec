@@ -31,9 +31,11 @@ VARIABLES
     \* @type: [type: Str, seq: Int, balance: Int];
     senderLastUpdate,
     \* @type: [type: Str, seq: Int, balance: Int];
-    senderInFlightUpdate
+    senderInFlightUpdate,
+    \* @type: BOOLEAN
+    receiverChallenged
 
-\* UNCHANGED <<msgs, contractPhase, contractLastUpdate, receiverLastUpdate, senderLastUpdate, senderInFlightUpdate>>
+\* UNCHANGED <<msgs, contractPhase, contractLastUpdate, receiverLastUpdate, senderLastUpdate, senderInFlightUpdate, receiverChallenged>>
 
 UpdateMessage == [type: {"update"}, seq: 0..5, balance: 0..5, senderSig: BOOLEAN, receiverSig: BOOLEAN]
 
@@ -50,8 +52,13 @@ TypeOK ==
 
 \* Channel should not close with an update that doesn't match the sender and the receiver's latest update
 UpdatesMatch ==
-    IF contractPhase = "closed"
-    THEN contractLastUpdate = senderLastUpdate /\ contractLastUpdate = receiverLastUpdate
+    IF contractPhase = "closed" /\ receiverChallenged = TRUE
+    THEN 
+        /\  contractLastUpdate = receiverLastUpdate
+        /\  
+            \/  contractLastUpdate = senderLastUpdate 
+            \/  contractLastUpdate = [senderInFlightUpdate EXCEPT !["receiverSig"] = TRUE]
+            
     ELSE TRUE
 
 Inv == TypeOK /\ UpdatesMatch
@@ -87,9 +94,10 @@ Init ==
             senderSig |-> TRUE,
             receiverSig |-> TRUE
         ]
+    /\  receiverChallenged = FALSE
 
 SenderSendsPayment ==
-    /\  senderLastUpdate.seq <= 5
+    /\  senderLastUpdate.seq < 5
     /\  LET m == [
             type |-> "update",
             seq |-> senderLastUpdate.seq + 1,
@@ -99,13 +107,14 @@ SenderSendsPayment ==
         ]
         IN  /\  msgs' = {m}
             /\  senderInFlightUpdate' = m
-    /\  UNCHANGED <<contractPhase, contractLastUpdate, receiverLastUpdate, senderLastUpdate>>
+    /\  UNCHANGED <<contractPhase, contractLastUpdate, receiverLastUpdate, senderLastUpdate, receiverChallenged>>
 
 MessageLost == 
     /\  msgs' = {}
-    /\  UNCHANGED <<contractPhase, contractLastUpdate, receiverLastUpdate, senderLastUpdate, senderInFlightUpdate>>
+    /\  UNCHANGED <<contractPhase, contractLastUpdate, receiverLastUpdate, senderLastUpdate, senderInFlightUpdate, receiverChallenged>>
 
 ReceiverConfirmsPayment ==
+    /\  contractPhase = "open"
     /\ \E m \in msgs:
         /\  m.type = "update"
         /\  m.seq = receiverLastUpdate.seq + 1
@@ -114,22 +123,22 @@ ReceiverConfirmsPayment ==
         /\  m.receiverSig = FALSE
         /\  receiverLastUpdate' = [m EXCEPT !["receiverSig"] = TRUE]
         /\  msgs' = {[m EXCEPT !["receiverSig"] = TRUE]}
-    /\  UNCHANGED <<contractPhase, contractLastUpdate, senderLastUpdate, senderInFlightUpdate>>
+    /\  UNCHANGED <<contractPhase, contractLastUpdate, senderLastUpdate, senderInFlightUpdate, receiverChallenged>>
 
 SenderReceivesConfirmation ==
     /\ \E m \in msgs:
         /\  m = [senderInFlightUpdate EXCEPT !["receiverSig"] = TRUE]
         /\  senderLastUpdate' = m
         /\  msgs' = {}
-    /\  UNCHANGED <<contractPhase, contractLastUpdate, receiverLastUpdate, senderInFlightUpdate>>
+    /\  UNCHANGED <<contractPhase, contractLastUpdate, receiverLastUpdate, senderInFlightUpdate, receiverChallenged>>
 
 SenderHonestClose ==
     /\  msgs' = {[ type |-> "close", lastUpdate |-> senderLastUpdate ]}
-    /\  UNCHANGED <<contractPhase, contractLastUpdate, receiverLastUpdate, senderLastUpdate, senderInFlightUpdate>>
+    /\  UNCHANGED <<contractPhase, contractLastUpdate, receiverLastUpdate, senderLastUpdate, senderInFlightUpdate, receiverChallenged>>
 
 ReceiverHonestClose ==
     /\  msgs' = {[ type |-> "close", lastUpdate |-> receiverLastUpdate ]}
-    /\  UNCHANGED <<contractPhase, contractLastUpdate, receiverLastUpdate, senderLastUpdate, senderInFlightUpdate>>
+    /\  UNCHANGED <<contractPhase, contractLastUpdate, receiverLastUpdate, senderLastUpdate, senderInFlightUpdate, receiverChallenged>>
 
 SenderDishonestClose ==
     /\  msgs' = {[ type |-> "close", lastUpdate |-> [
@@ -149,7 +158,7 @@ ContractReceivesClose ==
         /\  contractPhase' = "challenge"
         /\  contractLastUpdate' = m.lastUpdate
         /\  msgs' = {}
-    /\  UNCHANGED <<receiverLastUpdate, senderLastUpdate, senderInFlightUpdate>>
+    /\  UNCHANGED <<receiverLastUpdate, senderLastUpdate, senderInFlightUpdate, receiverChallenged>>
 
 
 \* We can just assume that the challenger is the receiver, since in a unidirectional channel,
@@ -158,7 +167,7 @@ ReceiverChallenges ==
     /\  contractPhase = "challenge"
     /\  contractLastUpdate.seq < receiverLastUpdate.seq
     /\  msgs' = {[ type |-> "challenge", lastUpdate |-> receiverLastUpdate ]}
-    /\  UNCHANGED <<contractPhase, contractLastUpdate, receiverLastUpdate, senderLastUpdate, senderInFlightUpdate>>
+    /\  UNCHANGED <<contractPhase, contractLastUpdate, receiverLastUpdate, senderLastUpdate, senderInFlightUpdate, receiverChallenged>>
     
 ContractReceivesChallenge ==
     /\  contractPhase = "challenge"
@@ -169,12 +178,13 @@ ContractReceivesChallenge ==
         /\  m.lastUpdate.seq > contractLastUpdate.seq
         /\  contractLastUpdate' = m.lastUpdate
         /\  msgs' = {}
+        /\  receiverChallenged' = TRUE
     /\  UNCHANGED <<contractPhase, receiverLastUpdate, senderLastUpdate, senderInFlightUpdate>>
         
 FinalizeClose ==
     /\  contractPhase = "challenge"
     /\  contractPhase' = "closed"
-    /\  UNCHANGED <<msgs, contractLastUpdate, receiverLastUpdate, senderLastUpdate, senderInFlightUpdate>>
+    /\  UNCHANGED <<msgs, contractLastUpdate, receiverLastUpdate, senderLastUpdate, senderInFlightUpdate, receiverChallenged>>
 
 Next ==
     \/  SenderSendsPayment
