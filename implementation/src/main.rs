@@ -25,14 +25,14 @@ enum Message {
     Challenge(ChallengeMessage),
 }
 
-#[derive(Serialize, Deserialize, Debug, Clone)]
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 struct UpdateMessage {
     update: Update,
     sender_sig: Option<Vec<u8>>,
     receiver_sig: Option<Vec<u8>>,
 }
 
-#[derive(Serialize, Deserialize, Debug, Clone)]
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 struct Update {
     seq: u64,
     balance: u64,
@@ -63,22 +63,28 @@ struct Contract {
 
 struct Sender {
     last_update: UpdateMessage,
-    receiver_url: Url,
-    contract_url: Url,
+    in_flight_update: UpdateMessage,
+    first_update: UpdateMessage,
     priv_key: Keypair,
     receiver_pub_key: PublicKey,
 }
 
 struct Receiver {
     last_update: UpdateMessage,
-    contract_url: Url,
     priv_key: Keypair,
     sender_pub_key: PublicKey,
+    contract_phase: ContractPhase
 }
 
 fn gen_keys() -> Keypair {
     let mut csprng = OsRng {};
     Keypair::generate(&mut csprng)
+}
+
+fn make_sig<T: Serialize>(keypair: Keypair, message: T) -> Result<Vec<u8>> {
+    Ok(keypair.sign(
+        to_canonical_str(&serde_json::to_value(message)?)?.as_bytes()
+    ).to_bytes().to_vec())
 }
 
 fn check_sig<T: Serialize>(sig: Vec<u8>, pubkey: PublicKey, message: T) -> Result<()> {
@@ -113,14 +119,138 @@ impl Contract {
             last_update.update.clone(),
         )?;
 
-        self.phase = ContractPhase::Closed;
+        self.phase = ContractPhase::Challenge;
         self.last_update = Some(last_update);
 
         Ok(())
     }
 
     fn challenge(&self, last_update: UpdateMessage) -> Result<()> {
+        if let Challenge = &self.phase {
+        } else {
+            return Err(anyhow!("Contract must be in challenge phase"));
+        }
+
+        check_sig(
+            last_update
+                .receiver_sig
+                .ok_or_else(anyhow!("Update must have receiver signature"))?,
+            self.receiver_pub_key,
+            last_update.update.clone(),
+        )?;
+        check_sig(
+            last_update
+                .sender_sig
+                .ok_or_else(anyhow!("Update must have sender signature"))?,
+            self.sender_pub_key,
+            last_update.update.clone(),
+        )?;
+
+        self.last_update = Some(last_update);
+
         Ok(())
+    }
+    
+    fn finalize_close(&mut self) -> Result<()> {
+        if let ContractPhase::Challenge = self.phase {} else {
+            return Err(anyhow!("Must be in challenge phase to finalize close"))
+        }
+
+        self.phase = ContractPhase::Closed;
+
+        Ok(())
+    }
+}
+
+impl Sender {
+    fn send_payment(&mut self, amount: u64) -> Result<UpdateMessage> {
+        let update = Update {
+            balance: self.last_update.update.balance + amount,
+            seq: self.last_update.update.seq + 1
+        };
+
+        let update_message = UpdateMessage {
+            update,
+            sender_sig: Some(make_sig(self.priv_key, update)?),
+            receiver_sig: None
+        };
+
+        self.in_flight_update = update_message;
+
+        Ok(update_message)
+    }
+
+    fn receive_confirmation(&mut self, update_message: UpdateMessage) -> Result<()> {
+        {
+            // Erasing the sig in this scope for the purposes of comparison
+            let update_message = UpdateMessage {
+                receiver_sig: None,
+                ..update_message
+            };
+
+            if self.in_flight_update != update_message {
+                return Err(anyhow!("Update confirmation must match current in flight update"))
+            };
+        }
+
+        check_sig(
+            update_message
+                .receiver_sig
+                .ok_or_else(anyhow!("Update must have receiver signature"))?,
+            self.receiver_pub_key,
+            update_message.update.clone(),
+        )?;
+
+        self.last_update = update_message;
+
+        Ok(())
+    }
+
+    fn close(&self, honest: bool) -> Result<CloseMessage> {
+        if honest {
+            Ok(CloseMessage {
+                last_update: self.last_update
+            })
+        } else {
+            Ok(CloseMessage {
+                last_update: self.first_update
+            })
+        }
+    }
+}
+
+impl Receiver {
+    fn confirm_payment(&mut self, update_message: UpdateMessage) -> Result<UpdateMessage> {
+        if !(update_message.update.balance >= self.last_update.update.balance) {
+            return Err(anyhow!("Update must have greater or equal channel balance"))
+        }
+
+        if !(update_message.update.seq > self.last_update.update.seq) {
+            return Err(anyhow!("Update must have greater sequence number"))
+        }
+
+        check_sig(
+            update_message
+                .sender_sig
+                .ok_or_else(anyhow!("Update must have sender signature"))?,
+            self.sender_pub_key,
+            update_message.update.clone(),
+        )?;
+
+        let update_message = UpdateMessage {
+            receiver_sig: Some(make_sig(self.priv_key, update_message.update)?),
+            ..update_message
+        };
+
+        self.last_update = update_message;
+
+        Ok(update_message)
+    }
+
+    fn challenge(&self) -> Result<ChallengeMessage> {
+        Ok(ChallengeMessage {
+            last_update: self.last_update
+        })
     }
 }
 
