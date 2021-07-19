@@ -4,3 +4,4 @@ x/
 *.smt
 states/
 *.out
+*/target/*
