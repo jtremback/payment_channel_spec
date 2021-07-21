@@ -5,3 +5,4 @@ x/
 states/
 *.out
 */target/*
+.modelator

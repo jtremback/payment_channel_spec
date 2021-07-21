@@ -8,13 +8,11 @@ use std::convert::TryFrom;
 use url::Url;
 
 fn main() {
-    println!("Hello, world!");
-    let contract = Contract {
-        phase: ContractPhase::Open,
-        last_update: None,
-        receiver_pub_key: gen_keys().public,
-        sender_pub_key: gen_keys().public,
-    };
+    let tla_tests_file = "../PaymentChannel.tla";
+    let tla_config_file = "../PaymentChannel.cfg";
+    let options = modelator::Options::default();
+    let traces = modelator::traces(tla_tests_file, tla_config_file, &options).unwrap();
+    println!("{}", traces[0]);
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
@@ -81,7 +79,7 @@ fn gen_keys() -> Keypair {
     Keypair::generate(&mut csprng)
 }
 
-fn make_sig<T: Serialize>(keypair: Keypair, message: T) -> Result<Vec<u8>> {
+fn make_sig<T: Serialize>(keypair: &Keypair, message: T) -> Result<Vec<u8>> {
     Ok(keypair.sign(
         to_canonical_str(&serde_json::to_value(message)?)?.as_bytes()
     ).to_bytes().to_vec())
@@ -106,15 +104,15 @@ impl Contract {
 
         check_sig(
             last_update
-                .receiver_sig
-                .ok_or_else(anyhow!("Update must have receiver signature"))?,
+                .receiver_sig.clone()
+                .ok_or(anyhow!("Update must have receiver signature"))?,
             self.receiver_pub_key,
             last_update.update.clone(),
         )?;
         check_sig(
             last_update
-                .sender_sig
-                .ok_or_else(anyhow!("Update must have sender signature"))?,
+                .sender_sig.clone()
+                .ok_or(anyhow!("Update must have sender signature"))?,
             self.sender_pub_key,
             last_update.update.clone(),
         )?;
@@ -125,7 +123,7 @@ impl Contract {
         Ok(())
     }
 
-    fn challenge(&self, last_update: UpdateMessage) -> Result<()> {
+    fn challenge(&mut self, last_update: UpdateMessage) -> Result<()> {
         if let Challenge = &self.phase {
         } else {
             return Err(anyhow!("Contract must be in challenge phase"));
@@ -133,15 +131,15 @@ impl Contract {
 
         check_sig(
             last_update
-                .receiver_sig
-                .ok_or_else(anyhow!("Update must have receiver signature"))?,
+                .receiver_sig.clone()
+                .ok_or(anyhow!("Update must have receiver signature"))?,
             self.receiver_pub_key,
             last_update.update.clone(),
         )?;
         check_sig(
             last_update
-                .sender_sig
-                .ok_or_else(anyhow!("Update must have sender signature"))?,
+                .sender_sig.clone()
+                .ok_or(anyhow!("Update must have sender signature"))?,
             self.sender_pub_key,
             last_update.update.clone(),
         )?;
@@ -170,12 +168,12 @@ impl Sender {
         };
 
         let update_message = UpdateMessage {
-            update,
-            sender_sig: Some(make_sig(self.priv_key, update)?),
+            update: update.clone(),
+            sender_sig: Some(make_sig(&self.priv_key, update.clone())?),
             receiver_sig: None
         };
 
-        self.in_flight_update = update_message;
+        self.in_flight_update = update_message.clone();
 
         Ok(update_message)
     }
@@ -185,7 +183,7 @@ impl Sender {
             // Erasing the sig in this scope for the purposes of comparison
             let update_message = UpdateMessage {
                 receiver_sig: None,
-                ..update_message
+                ..update_message.clone()
             };
 
             if self.in_flight_update != update_message {
@@ -195,8 +193,8 @@ impl Sender {
 
         check_sig(
             update_message
-                .receiver_sig
-                .ok_or_else(anyhow!("Update must have receiver signature"))?,
+                .receiver_sig.clone()
+                .ok_or(anyhow!("Update must have receiver signature"))?,
             self.receiver_pub_key,
             update_message.update.clone(),
         )?;
@@ -209,11 +207,11 @@ impl Sender {
     fn close(&self, honest: bool) -> Result<CloseMessage> {
         if honest {
             Ok(CloseMessage {
-                last_update: self.last_update
+                last_update: self.last_update.clone()
             })
         } else {
             Ok(CloseMessage {
-                last_update: self.first_update
+                last_update: self.first_update.clone()
             })
         }
     }
@@ -231,25 +229,25 @@ impl Receiver {
 
         check_sig(
             update_message
-                .sender_sig
-                .ok_or_else(anyhow!("Update must have sender signature"))?,
+                .sender_sig.clone()
+                .ok_or(anyhow!("Update must have sender signature"))?,
             self.sender_pub_key,
             update_message.update.clone(),
         )?;
 
         let update_message = UpdateMessage {
-            receiver_sig: Some(make_sig(self.priv_key, update_message.update)?),
+            receiver_sig: Some(make_sig(&self.priv_key, update_message.update.clone())?),
             ..update_message
         };
 
-        self.last_update = update_message;
+        self.last_update = update_message.clone();
 
         Ok(update_message)
     }
 
     fn challenge(&self) -> Result<ChallengeMessage> {
         Ok(ChallengeMessage {
-            last_update: self.last_update
+            last_update: self.last_update.clone()
         })
     }
 }

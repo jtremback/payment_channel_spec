@@ -51,17 +51,16 @@ TypeOK ==
     /\  {contractLastUpdate, receiverLastUpdate, senderLastUpdate, senderInFlightUpdate} \subseteq Messages
 
 \* Channel should not close with an update that doesn't match the sender and the receiver's latest update
-UpdatesMatch ==
-    IF contractPhase = "closed" /\ receiverChallenged = TRUE
-    THEN 
+UpdatesMatch == 
+    (contractPhase = "closed" /\  receiverChallenged) =>
         /\  contractLastUpdate = receiverLastUpdate
-        /\  
-            \/  contractLastUpdate = senderLastUpdate 
-            \/  contractLastUpdate = [senderInFlightUpdate EXCEPT !["receiverSig"] = TRUE]
-            
-    ELSE TRUE
 
-Inv == TypeOK /\ UpdatesMatch
+HappyPathTest ==
+    /\  contractPhase = "closed"
+    /\  receiverChallenged
+    /\  contractLastUpdate = receiverLastUpdate
+
+HappyPathNeg == ~HappyPathTest
 
 Init ==
     /\  msgs = {}
