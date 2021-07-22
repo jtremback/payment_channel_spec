@@ -6,6 +6,7 @@ use serde::{Deserialize, Serialize};
 use serde_json;
 use std::convert::TryFrom;
 use url::Url;
+use modelator::runner::TestRunner;
 
 fn main() {
     let tla_tests_file = "../PaymentChannel.tla";
@@ -13,6 +14,118 @@ fn main() {
     let options = modelator::Options::default();
     let traces = modelator::traces(tla_tests_file, tla_config_file, &options).unwrap();
     println!("{}", traces[0]);
+    println!("{:#?}", modelator::run(tla_tests_file, tla_config_file, &options, PaymentChannelTestRunner));
+}
+
+#[derive(Debug, Clone, Deserialize)]
+struct PaymentChannelTestRunner;
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+enum PaymentChannelAction {
+    Init,
+    SenderSendsPayment,
+    MessageLost,
+    ReceiverConfirmsPayment,
+    SenderReceivesConfirmation,
+    SenderHonestClose,
+    ReceiverHonestClose,
+    SenderDishonestClose,
+    ContractReceivesClose,
+    ReceiverChallenges,
+    ContractReceivesChallenge,
+    FinalizeClose
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+enum TLAContractPhase {
+    open,
+    challenge,
+    closed
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct TLAUpdateMessage {
+    balance: u64,
+    receiverSig: bool,
+    senderSig: bool,
+    seq: u64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct TLACloseMessage {
+    lastUpdate: TLAUpdateMessage
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct TLAChallengeMessage {
+    lastUpdate: TLAUpdateMessage
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(tag = "type")]
+enum TLAMessage {
+    #[serde(rename = "update")]
+    Update(TLAUpdateMessage),
+    #[serde(rename = "close")]
+    Close(TLACloseMessage),
+    #[serde(rename = "challenge")]
+    Challenge(TLAChallengeMessage)
+}
+
+// {
+//     "action": "FinalizeClose",
+//     "contractLastUpdate": {
+//       "balance": 1,
+//       "receiverSig": true,
+//       "senderSig": true,
+//       "seq": 1,
+//       "type": "update"
+//     },
+//     "contractPhase": "closed",
+//     "msgs": [],
+//     "receiverChallenged": true,
+//     "receiverLastUpdate": {
+//       "balance": 1,
+//       "receiverSig": true,
+//       "senderSig": true,
+//       "seq": 1,
+//       "type": "update"
+//     },
+//     "senderInFlightUpdate": {
+//       "balance": 1,
+//       "receiverSig": false,
+//       "senderSig": true,
+//       "seq": 1,
+//       "type": "update"
+//     },
+//     "senderLastUpdate": {
+//       "balance": 0,
+//       "receiverSig": true,
+//       "senderSig": true,
+//       "seq": 0,
+//       "type": "update"
+//     }
+//   }
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct PaymentChannelStep {
+    action: PaymentChannelAction,
+    contractPhase: TLAContractPhase,
+    msgs: Vec<TLAMessage>,
+    receiverChallenged: bool,
+    contractLastUpdate: TLAUpdateMessage,
+    receiverLastUpdate: TLAUpdateMessage,
+    senderLastUpdate: TLAUpdateMessage,
+    senderInFlightUpdate: TLAUpdateMessage,
+}
+
+impl TestRunner<PaymentChannelStep> for PaymentChannelTestRunner {
+    fn initial_step(&mut self, step: PaymentChannelStep) -> bool {
+        true
+    }
+
+    fn next_step(&mut self, step: PaymentChannelStep) -> bool {
+        true
+    }
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
@@ -260,8 +373,8 @@ mod tests {
     fn protocol_serialization() {
         let update = UpdateMessage {
             update: Update { seq: 0, balance: 0 },
-            sender_sig: vec![1],
-            receiver_sig: vec![1],
+            sender_sig: Some(vec![1]),
+            receiver_sig: Some(vec![1]),
         };
         let test_values: Vec<Message> = vec![
             Message::Update(update.clone()),
@@ -282,5 +395,54 @@ mod tests {
 
             // assert_eq!(value, deserialized);
         }
+    }
+    #[test]
+    fn step_serialization() {
+        let data = r#"{
+            "action": "SenderSendsPayment",
+            "contractLastUpdate": {
+              "balance": 0,
+              "receiverSig": true,
+              "senderSig": true,
+              "seq": 0,
+              "type": "update"
+            },
+            "contractPhase": "challenge",
+            "msgs": [
+              {
+                "balance": 1,
+                "receiverSig": false,
+                "senderSig": true,
+                "seq": 1,
+                "type": "update"
+              }
+            ],
+            "receiverChallenged": false,
+            "receiverLastUpdate": {
+              "balance": 1,
+              "receiverSig": true,
+              "senderSig": true,
+              "seq": 1,
+              "type": "update"
+            },
+            "senderInFlightUpdate": {
+              "balance": 1,
+              "receiverSig": false,
+              "senderSig": true,
+              "seq": 1,
+              "type": "update"
+            },
+            "senderLastUpdate": {
+              "balance": 0,
+              "receiverSig": true,
+              "senderSig": true,
+              "seq": 0,
+              "type": "update"
+            }
+          }"#;
+
+        let deserialized: PaymentChannelStep = serde_json::from_str(&data).unwrap();
+
+        println!("{:#?}", deserialized);
     }
 }

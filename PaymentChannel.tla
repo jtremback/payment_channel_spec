@@ -33,7 +33,9 @@ VARIABLES
     \* @type: [type: Str, seq: Int, balance: Int];
     senderInFlightUpdate,
     \* @type: BOOLEAN
-    receiverChallenged
+    receiverChallenged,
+    \* @type: Str
+    action
 
 \* UNCHANGED <<msgs, contractPhase, contractLastUpdate, receiverLastUpdate, senderLastUpdate, senderInFlightUpdate, receiverChallenged>>
 
@@ -94,8 +96,10 @@ Init ==
             receiverSig |-> TRUE
         ]
     /\  receiverChallenged = FALSE
+    /\  action = "Init"
 
 SenderSendsPayment ==
+    /\  action' = "SenderSendsPayment"
     /\  senderLastUpdate.seq < 5
     /\  LET m == [
             type |-> "update",
@@ -108,11 +112,13 @@ SenderSendsPayment ==
             /\  senderInFlightUpdate' = m
     /\  UNCHANGED <<contractPhase, contractLastUpdate, receiverLastUpdate, senderLastUpdate, receiverChallenged>>
 
-MessageLost == 
+MessageLost ==
+    /\  action' = "MessageLost"
     /\  msgs' = {}
     /\  UNCHANGED <<contractPhase, contractLastUpdate, receiverLastUpdate, senderLastUpdate, senderInFlightUpdate, receiverChallenged>>
 
 ReceiverConfirmsPayment ==
+    /\  action' = "ReceiverConfirmsPayment"
     /\  contractPhase = "open"
     /\ \E m \in msgs:
         /\  m.type = "update"
@@ -125,6 +131,7 @@ ReceiverConfirmsPayment ==
     /\  UNCHANGED <<contractPhase, contractLastUpdate, senderLastUpdate, senderInFlightUpdate, receiverChallenged>>
 
 SenderReceivesConfirmation ==
+    /\  action' = "SenderReceivesConfirmation"
     /\ \E m \in msgs:
         /\  m = [senderInFlightUpdate EXCEPT !["receiverSig"] = TRUE]
         /\  senderLastUpdate' = m
@@ -132,14 +139,17 @@ SenderReceivesConfirmation ==
     /\  UNCHANGED <<contractPhase, contractLastUpdate, receiverLastUpdate, senderInFlightUpdate, receiverChallenged>>
 
 SenderHonestClose ==
+    /\  action' = "SenderHonestClose"
     /\  msgs' = {[ type |-> "close", lastUpdate |-> senderLastUpdate ]}
     /\  UNCHANGED <<contractPhase, contractLastUpdate, receiverLastUpdate, senderLastUpdate, senderInFlightUpdate, receiverChallenged>>
 
 ReceiverHonestClose ==
+    /\  action' = "ReceiverHonestClose"
     /\  msgs' = {[ type |-> "close", lastUpdate |-> receiverLastUpdate ]}
     /\  UNCHANGED <<contractPhase, contractLastUpdate, receiverLastUpdate, senderLastUpdate, senderInFlightUpdate, receiverChallenged>>
 
 SenderDishonestClose ==
+    /\  action' = "SenderDishonestClose"
     /\  msgs' = {[ type |-> "close", lastUpdate |-> [
             type |-> "update",
             seq |-> 0,
@@ -149,6 +159,7 @@ SenderDishonestClose ==
         ]]}
 
 ContractReceivesClose ==
+    /\  action' = "ContractReceivesClose"
     /\  contractPhase = "open"
     /\  \E m \in msgs:
         /\  m.type = "close"
@@ -163,12 +174,14 @@ ContractReceivesClose ==
 \* We can just assume that the challenger is the receiver, since in a unidirectional channel,
 \* only the sender has something to gain from an incorrect close, and wouldn't be challenging it
 ReceiverChallenges ==
+    /\  action' = "ReceiverChallenges"
     /\  contractPhase = "challenge"
     /\  contractLastUpdate.seq < receiverLastUpdate.seq
     /\  msgs' = {[ type |-> "challenge", lastUpdate |-> receiverLastUpdate ]}
     /\  UNCHANGED <<contractPhase, contractLastUpdate, receiverLastUpdate, senderLastUpdate, senderInFlightUpdate, receiverChallenged>>
     
 ContractReceivesChallenge ==
+    /\  action' = "ContractReceivesChallenge"
     /\  contractPhase = "challenge"
     /\  \E m \in msgs:
         /\  m.type = "challenge"
@@ -181,6 +194,7 @@ ContractReceivesChallenge ==
     /\  UNCHANGED <<contractPhase, receiverLastUpdate, senderLastUpdate, senderInFlightUpdate>>
         
 FinalizeClose ==
+    /\  action' = "FinalizeClose"
     /\  contractPhase = "challenge"
     /\  contractPhase' = "closed"
     /\  UNCHANGED <<msgs, contractLastUpdate, receiverLastUpdate, senderLastUpdate, senderInFlightUpdate, receiverChallenged>>
