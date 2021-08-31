@@ -64,37 +64,21 @@ HappyPathTest ==
 
 HappyPathNeg == ~HappyPathTest
 
+FirstUpdateMessage == [
+        type |-> "update",
+        seq |-> 0,
+        balance |-> 0,
+        senderSig |-> TRUE,
+        receiverSig |-> TRUE
+    ]
+
 Init ==
     /\  msgs = {}
     /\  contractPhase = "open"
-    /\  contractLastUpdate = [
-            type |-> "update",
-            seq |-> 0,
-            balance |-> 0,
-            senderSig |-> TRUE,
-            receiverSig |-> TRUE
-        ]
-    /\  receiverLastUpdate = [
-            type |-> "update",
-            seq |-> 0,
-            balance |-> 0,
-            senderSig |-> TRUE,
-            receiverSig |-> TRUE
-        ]
-    /\  senderLastUpdate = [
-            type |-> "update",
-            seq |-> 0,
-            balance |-> 0,
-            senderSig |-> TRUE,
-            receiverSig |-> TRUE
-        ]
-    /\  senderInFlightUpdate = [
-            type |-> "update",
-            seq |-> 0,
-            balance |-> 0,
-            senderSig |-> TRUE,
-            receiverSig |-> TRUE
-        ]
+    /\  contractLastUpdate = FirstUpdateMessage
+    /\  receiverLastUpdate = FirstUpdateMessage
+    /\  senderLastUpdate = FirstUpdateMessage
+    /\  senderInFlightUpdate = FirstUpdateMessage
     /\  receiverChallenged = FALSE
     /\  action = "Init"
 

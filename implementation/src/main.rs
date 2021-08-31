@@ -1,24 +1,66 @@
 use anyhow::{anyhow, Result};
 use canonical_json::ser::to_string as to_canonical_str;
-use ed25519_dalek::{Keypair, PublicKey, Signature, Signer, Verifier};
+use ed25519_dalek::{PublicKey, Signature, Signer, Verifier};
 use rand::rngs::OsRng;
 use serde::{Deserialize, Serialize};
 use serde_json;
 use std::convert::TryFrom;
 use url::Url;
 use modelator::runner::TestRunner;
+use std::ops::Deref;
 
 fn main() {
     let tla_tests_file = "../PaymentChannel.tla";
     let tla_config_file = "../PaymentChannel.cfg";
     let options = modelator::Options::default();
     let traces = modelator::traces(tla_tests_file, tla_config_file, &options).unwrap();
-    println!("{}", traces[0]);
-    println!("{:#?}", modelator::run(tla_tests_file, tla_config_file, &options, PaymentChannelTestRunner));
+    // println!("{}", traces[0]);
+
+    let sender_priv_key = gen_keys();
+    let receiver_priv_key = gen_keys();
+
+    let first_update = Update {
+        balance: 0,
+        seq: 0
+    };
+
+    let first_update_message = UpdateMessage {
+        update: first_update.clone(),
+        receiver_sig: Some(make_sig(&receiver_priv_key, first_update.clone()).unwrap()),
+        sender_sig: Some(make_sig(&sender_priv_key, first_update.clone()).unwrap())
+    };
+
+    println!("{:#?}", modelator::run(tla_tests_file, tla_config_file, &options, PaymentChannelTestRunner {
+        contract: Contract {
+            phase: ContractPhase::Open,
+            last_update: first_update_message.clone(),
+            receiver_pub_key: receiver_priv_key.public,
+            sender_pub_key: sender_priv_key.public
+        },
+        sender: Sender {
+            first_update: first_update_message.clone(),
+            in_flight_update: first_update_message.clone(),
+            last_update: first_update_message.clone(),
+            receiver_pub_key: receiver_priv_key.public,
+            priv_key: sender_priv_key.clone()
+        },
+        receiver: Receiver {
+            contract_phase: ContractPhase::Open,
+            last_update: first_update_message.clone(),
+            sender_pub_key: sender_priv_key.public,
+            priv_key: sender_priv_key
+        },
+        message: None
+    }));
 }
 
-#[derive(Debug, Clone, Deserialize)]
-struct PaymentChannelTestRunner;
+#[derive(Debug, Clone)]
+struct PaymentChannelTestRunner {
+    contract: Contract,
+    sender: Sender,
+    receiver: Receiver,
+    message: Option<Message>
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 enum PaymentChannelAction {
@@ -120,11 +162,66 @@ struct PaymentChannelStep {
 
 impl TestRunner<PaymentChannelStep> for PaymentChannelTestRunner {
     fn initial_step(&mut self, step: PaymentChannelStep) -> bool {
+        println!("{:#?}", step);
         true
     }
 
     fn next_step(&mut self, step: PaymentChannelStep) -> bool {
+        println!("{:#?}", step);
+
+        match step.action {
+            PaymentChannelAction::SenderSendsPayment => {
+                self.message = Some(Message::Update(self.sender.send_payment(1).unwrap()))
+            }
+            PaymentChannelAction::ReceiverConfirmsPayment => {
+                if let Message::Update(msg) = self.message.clone().unwrap() {
+                    self.message = Some(Message::Update(self.receiver.confirm_payment(msg).unwrap()))
+                } else {
+                    panic!("wrong message type")
+                }
+            }
+            PaymentChannelAction::SenderHonestClose => {
+                self.message = Some(Message::Close(self.sender.close(true).unwrap()))
+            }
+            PaymentChannelAction::ContractReceivesClose => {
+                if let Message::Close(msg) = self.message.clone().unwrap() {
+                    self.contract.close(msg.last_update).unwrap()
+                } else {
+                    panic!("wrong message type")
+                }
+            }
+            PaymentChannelAction::ReceiverChallenges => {
+                self.message = Some(Message::Challenge(self.receiver.challenge().unwrap()))
+            }
+            PaymentChannelAction::ContractReceivesChallenge => {
+                if let Message::Challenge(msg) = self.message.clone().unwrap() {
+                    self.contract.challenge(msg.last_update).unwrap()
+                } else {
+                    panic!("wrong message type")
+                }
+            }
+            // PaymentChannelAction::
+            _ => unimplemented!()
+        }
+
         true
+    }
+}
+
+#[derive(Debug)]
+struct Keypair(ed25519_dalek::Keypair);
+
+impl Clone for Keypair {
+    fn clone(&self) -> Self {
+        Keypair(ed25519_dalek::Keypair::from_bytes(&self.0.to_bytes()).unwrap())
+    }
+}
+
+impl Deref for Keypair {
+    type Target = ed25519_dalek::Keypair;
+
+    fn deref(&self) -> &Self::Target {
+        &self.0
     }
 }
 
@@ -159,19 +256,22 @@ struct ChallengeMessage {
     last_update: UpdateMessage,
 }
 
+#[derive(Debug, Clone, Deserialize)]
 enum ContractPhase {
     Open,
     Challenge,
     Closed,
 }
 
+#[derive(Debug, Clone)]
 struct Contract {
     phase: ContractPhase,
-    last_update: Option<UpdateMessage>,
+    last_update: UpdateMessage,
     sender_pub_key: PublicKey,
     receiver_pub_key: PublicKey,
 }
 
+#[derive(Debug, Clone)]
 struct Sender {
     last_update: UpdateMessage,
     in_flight_update: UpdateMessage,
@@ -180,6 +280,7 @@ struct Sender {
     receiver_pub_key: PublicKey,
 }
 
+#[derive(Debug, Clone)]
 struct Receiver {
     last_update: UpdateMessage,
     priv_key: Keypair,
@@ -189,7 +290,7 @@ struct Receiver {
 
 fn gen_keys() -> Keypair {
     let mut csprng = OsRng {};
-    Keypair::generate(&mut csprng)
+    Keypair(ed25519_dalek::Keypair::generate(&mut csprng))
 }
 
 fn make_sig<T: Serialize>(keypair: &Keypair, message: T) -> Result<Vec<u8>> {
@@ -210,54 +311,54 @@ fn check_sig<T: Serialize>(sig: Vec<u8>, pubkey: PublicKey, message: T) -> Resul
 
 impl Contract {
     fn close(&mut self, last_update: UpdateMessage) -> Result<()> {
-        if let Open = &self.phase {
-        } else {
-            return Err(anyhow!("Contract must be in open phase"));
+        match &self.phase {
+            ContractPhase::Open => {}
+            _ => { return Err(anyhow!("Contract must be in open phase")); }
         }
 
         check_sig(
             last_update
                 .receiver_sig.clone()
-                .ok_or(anyhow!("Update must have receiver signature"))?,
+                .ok_or_else(|| anyhow!("Update must have receiver signature"))?,
             self.receiver_pub_key,
             last_update.update.clone(),
         )?;
         check_sig(
             last_update
                 .sender_sig.clone()
-                .ok_or(anyhow!("Update must have sender signature"))?,
+                .ok_or_else(|| anyhow!("Update must have sender signature"))?,
             self.sender_pub_key,
             last_update.update.clone(),
         )?;
 
         self.phase = ContractPhase::Challenge;
-        self.last_update = Some(last_update);
+        self.last_update = last_update;
 
         Ok(())
     }
 
     fn challenge(&mut self, last_update: UpdateMessage) -> Result<()> {
-        if let Challenge = &self.phase {
-        } else {
-            return Err(anyhow!("Contract must be in challenge phase"));
+        match &self.phase {
+            ContractPhase::Challenge => {}
+            _ => { return Err(anyhow!("Contract must be in challenge phase")); }
         }
-
-        check_sig(
-            last_update
-                .receiver_sig.clone()
-                .ok_or(anyhow!("Update must have receiver signature"))?,
-            self.receiver_pub_key,
-            last_update.update.clone(),
-        )?;
         check_sig(
             last_update
                 .sender_sig.clone()
-                .ok_or(anyhow!("Update must have sender signature"))?,
+                .ok_or_else(|| anyhow!("Update must have sender signature"))?,
             self.sender_pub_key,
             last_update.update.clone(),
         )?;
+        println!("hello");
+        check_sig(
+            last_update
+            .receiver_sig.clone()
+            .ok_or_else(|| anyhow!("Update must have receiver signature"))?,
+            self.receiver_pub_key,
+            last_update.update.clone(),
+        )?;
 
-        self.last_update = Some(last_update);
+        self.last_update = last_update;
 
         Ok(())
     }
@@ -307,7 +408,7 @@ impl Sender {
         check_sig(
             update_message
                 .receiver_sig.clone()
-                .ok_or(anyhow!("Update must have receiver signature"))?,
+                .ok_or_else(|| anyhow!("Update must have receiver signature"))?,
             self.receiver_pub_key,
             update_message.update.clone(),
         )?;
@@ -343,19 +444,19 @@ impl Receiver {
         check_sig(
             update_message
                 .sender_sig.clone()
-                .ok_or(anyhow!("Update must have sender signature"))?,
+                .ok_or_else(|| anyhow!("Update must have sender signature"))?,
             self.sender_pub_key,
             update_message.update.clone(),
         )?;
 
-        let update_message = UpdateMessage {
+        let new_update_message = UpdateMessage {
             receiver_sig: Some(make_sig(&self.priv_key, update_message.update.clone())?),
             ..update_message
         };
 
-        self.last_update = update_message.clone();
+        self.last_update = new_update_message.clone();
 
-        Ok(update_message)
+        Ok(new_update_message)
     }
 
     fn challenge(&self) -> Result<ChallengeMessage> {
